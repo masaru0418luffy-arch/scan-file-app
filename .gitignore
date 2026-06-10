@@ -1,0 +1,23 @@
+# 認証情報（絶対にコミットしないこと）
+credentials.json
+token.json
+.streamlit/secrets.toml
+
+# 設定ファイル
+config.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+venv/
+.venv/
+
+# macOS
+.DS_Store
+
+# PyInstaller（使わなくなったが念のため）
+dist/
+build/
+*.spec
