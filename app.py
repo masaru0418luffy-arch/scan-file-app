@@ -203,6 +203,51 @@ elif 'code' in params:
 st.title("📁 スキャンファイル 格納アプリ")
 
 # ─────────────────────────────────────────────────────────────────────────────
+# デスクトップアプリのダウンロード（サインイン不要で表示）
+# ─────────────────────────────────────────────────────────────────────────────
+
+with st.expander("💻 デスクトップアプリをダウンロードする（毎回URLを開かずに使えます）"):
+    st.markdown(
+        "ダウンロードしてデスクトップに置くと、**ダブルクリックだけでアプリが開きます。**"
+    )
+    st.markdown("---")
+    col_mac, col_win = st.columns(2)
+
+    with col_mac:
+        st.markdown("#### 🍎 Mac をお使いの方")
+        mac_path = os.path.join(os.path.dirname(__file__), "downloads", "スキャンファイル格納-mac.zip")
+        if os.path.exists(mac_path):
+            with open(mac_path, "rb") as f:
+                st.download_button(
+                    label="Mac版をダウンロード (.zip)",
+                    data=f.read(),
+                    file_name="スキャンファイル格納-mac.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                )
+            st.caption("① zipを解凍 → ② .appをデスクトップへ → ③ ダブルクリック")
+        else:
+            st.info("準備中です。")
+
+    with col_win:
+        st.markdown("#### 🪟 Windows をお使いの方")
+        win_path = os.path.join(os.path.dirname(__file__), "downloads", "スキャンファイル格納.url")
+        if os.path.exists(win_path):
+            with open(win_path, "rb") as f:
+                st.download_button(
+                    label="Windows版をダウンロード (.url)",
+                    data=f.read(),
+                    file_name="スキャンファイル格納.url",
+                    mime="application/internet-shortcut",
+                    use_container_width=True,
+                )
+            st.caption("① ダウンロード → ② デスクトップへ移動 → ③ ダブルクリック")
+        else:
+            st.info("準備中です。")
+
+st.markdown("---")
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 認証ゲート
 # ─────────────────────────────────────────────────────────────────────────────
 
