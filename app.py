@@ -7,9 +7,9 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
+import requests as req
 import streamlit as st
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
@@ -73,29 +73,42 @@ def _client_config() -> dict:
 
 
 def get_auth_url() -> str:
-    flow = Flow.from_client_config(
-        _client_config(), scopes=SCOPES,
-        redirect_uri=st.secrets['google']['redirect_uri'],
-    )
-    url, state = flow.authorization_url(
-        access_type='offline', include_granted_scopes='true', prompt='consent'
-    )
-    st.session_state['oauth_state'] = state
-    return url
+    g = st.secrets['google']
+    params = {
+        'client_id':     g['client_id'],
+        'redirect_uri':  g['redirect_uri'],
+        'response_type': 'code',
+        'scope':         ' '.join(SCOPES),
+        'access_type':   'offline',
+        'prompt':        'consent',
+    }
+    query = '&'.join(f"{k}={v}" for k, v in params.items())
+    return f"https://accounts.google.com/o/oauth2/auth?{query}"
 
 
 def exchange_code(code: str) -> dict:
-    flow = Flow.from_client_config(
-        _client_config(), scopes=SCOPES,
-        redirect_uri=st.secrets['google']['redirect_uri'],
+    """認証コードをアクセストークンに交換する（requests で直接リクエスト）。"""
+    g = st.secrets['google']
+    resp = req.post(
+        'https://oauth2.googleapis.com/token',
+        data={
+            'code':          code,
+            'client_id':     g['client_id'],
+            'client_secret': g['client_secret'],
+            'redirect_uri':  g['redirect_uri'],
+            'grant_type':    'authorization_code',
+        },
+        timeout=15,
     )
-    flow.fetch_token(code=code)
-    c = flow.credentials
+    resp.raise_for_status()
+    data = resp.json()
+    if 'error' in data:
+        raise ValueError(data.get('error_description', data['error']))
     return {
-        'token':         c.token,
-        'refresh_token': c.refresh_token,
-        'token_uri':     c.token_uri,
-        'scopes':        list(c.scopes or SCOPES),
+        'token':         data['access_token'],
+        'refresh_token': data.get('refresh_token'),
+        'token_uri':     'https://oauth2.googleapis.com/token',
+        'scopes':        data.get('scope', ' '.join(SCOPES)).split(),
     }
 
 
@@ -159,11 +172,26 @@ def get_folder_path(service, folder_id: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 params = st.query_params.to_dict()
-if 'code' in params:
-    try:
-        st.session_state['credentials'] = exchange_code(params['code'])
-    except Exception as e:
-        st.error(f"Googleサインインに失敗しました。もう一度お試しください。（{e}）")
+
+if 'error' in params:
+    err_msg = f"{params.get('error')}: {params.get('error_description', '')}"
+    st.session_state['auth_error'] = err_msg
+    st.query_params.clear()
+    st.rerun()
+
+elif 'code' in params:
+    code = params['code']
+    # 同じコードを二度処理しない
+    if st.session_state.get('_last_code') != code:
+        st.session_state['_last_code'] = code
+        st.session_state.pop('auth_error', None)
+        try:
+            st.session_state['credentials'] = exchange_code(code)
+        except Exception as e:
+            st.session_state['auth_error'] = (
+                f"{type(e).__name__}: {e}\n\n"
+                f"redirect_uri = {st.secrets['google'].get('redirect_uri', '未設定')}"
+            )
     st.query_params.clear()
     st.rerun()
 
@@ -185,6 +213,11 @@ if 'credentials' not in st.session_state:
         "ファイルを Google Drive に保存するため、"
         "Googleアカウントへのサインインが必要です。"
     )
+
+    # 認証エラーがあれば表示（pop しない → 消えない）
+    if 'auth_error' in st.session_state:
+        st.error(f"⚠️ サインインエラー:\n\n{st.session_state['auth_error']}")
+
     try:
         st.link_button(
             "🔑  Google アカウントでサインインする",
