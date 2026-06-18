@@ -462,8 +462,23 @@ if st.button("💾  このフォルダに保存する", type='primary', use_cont
 
             st.balloons()
             st.success(f"✅ 保存しました！　**{new_name}**")
-            if result.get('webViewLink'):
-                st.link_button("Google Drive で確認する 🔗", result['webViewLink'])
+
+            # ファイルとフォルダへの直リンクを表示
+            col_file, col_folder = st.columns(2)
+            with col_file:
+                if result.get('webViewLink'):
+                    st.link_button(
+                        "📄 保存したファイルを開く",
+                        result['webViewLink'],
+                        use_container_width=True,
+                    )
+            with col_folder:
+                folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
+                st.link_button(
+                    "📁 保存先フォルダを開く",
+                    folder_url,
+                    use_container_width=True,
+                )
 
         except Exception as e:
             st.error(f"保存に失敗しました。もう一度お試しください。\n（{e}）")
