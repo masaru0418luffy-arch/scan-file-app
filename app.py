@@ -146,6 +146,47 @@ def search_folders(service, name: str) -> list:
     return res.get('files', [])
 
 
+def list_child_folders(service, parent_id: str) -> list:
+    """指定フォルダの直下にあるサブフォルダ一覧を返す。"""
+    res = service.files().list(
+        q=(
+            f"'{parent_id}' in parents "
+            "and mimeType = 'application/vnd.google-apps.folder' "
+            "and trashed = false"
+        ),
+        fields='files(id, name)',
+        orderBy='name',
+        pageSize=100,
+        includeItemsFromAllDrives=True,
+        supportsAllDrives=True,
+        corpora='allDrives',
+    ).execute()
+    return res.get('files', [])
+
+
+def search_descendant_folders(service, parent_id: str, keyword: str,
+                              max_depth: int = 4) -> list:
+    """親フォルダの配下（子孫含む）からキーワードを含むフォルダを探す。"""
+    kw = keyword.lower()
+    matches: list = []
+    queue: list = [(parent_id, 0)]
+    visited: set = set()
+
+    while queue:
+        pid, depth = queue.pop(0)
+        if pid in visited or depth > max_depth:
+            continue
+        visited.add(pid)
+        for f in list_child_folders(service, pid):
+            if kw in f['name'].lower():
+                matches.append(f)
+            if depth < max_depth:
+                queue.append((f['id'], depth + 1))
+        if len(matches) >= 50:
+            break
+    return matches
+
+
 def get_folder_path(service, folder_id: str) -> str:
     """フォルダの表示パスを返す（最大4階層まで）。"""
     parts: list[str] = []
@@ -366,77 +407,156 @@ st.markdown(
 st.markdown("---")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ③ 保存先フォルダを指定する（名前入力 → 自動検索）
+# ③ 保存先フォルダを指定する（2段階検索）
+#   ③-1 お客様フォルダを探す → ③-2 その中の保存先フォルダを探す
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.subheader("③ 保存先フォルダを指定する")
-st.caption("フォルダ名の一部を入力してください。キーワードを含むフォルダを自動で探します。")
 
-# フォルダ検索フォーム（Enter キーでも送信できる）
-with st.form("folder_search_form", clear_on_submit=False):
-    folder_query = st.text_input(
-        "フォルダ名（一部でもOK）",
-        placeholder="例: 請負　/ 契約　/ 山崎",
-        help="フォルダ名の一部を入力するだけで候補が表示されます。",
-    )
-    search_submitted = st.form_submit_button("🔍 このフォルダを探す", use_container_width=True)
 
-# 検索実行
-if search_submitted and folder_query.strip():
-    # 前回の結果をリセット
-    for k in ['selected_folder', 'search_results', 'search_no_result']:
+def _reset_folder_state():
+    for k in ['customer_folder', 'customer_results', 'customer_no_result',
+              'selected_folder', 'sub_results', 'sub_no_result']:
         st.session_state.pop(k, None)
 
-    with st.spinner(f"「{folder_query.strip()}」を Google Drive で検索中…"):
-        found = search_folders(service, folder_query.strip())
+
+# ── ③-1 お客様フォルダを探す ────────────────────────────────────────────────
+st.markdown("**③-1　お客様フォルダを探す**")
+st.caption("お客様名（フォルダ名の一部）を入力してください。")
+
+with st.form("customer_search_form", clear_on_submit=False):
+    cust_query = st.text_input(
+        "お客様名",
+        value=cust_val,  # ②で入力したお客様名を初期値にする
+        placeholder="例: 山崎",
+    )
+    cust_submitted = st.form_submit_button("🔍 お客様フォルダを探す", use_container_width=True)
+
+if cust_submitted and cust_query.strip():
+    _reset_folder_state()
+    with st.spinner(f"「{cust_query.strip()}」を検索中…"):
+        found = search_folders(service, cust_query.strip())
 
     if not found:
-        st.session_state['search_no_result'] = folder_query.strip()
+        st.session_state['customer_no_result'] = cust_query.strip()
     elif len(found) == 1:
-        path = get_folder_path(service, found[0]['id'])
-        st.session_state['selected_folder'] = {'id': found[0]['id'], 'path': path}
+        st.session_state['customer_folder'] = {
+            'id': found[0]['id'],
+            'path': get_folder_path(service, found[0]['id']),
+        }
     else:
-        # 複数ヒット → パスを取得してリストに保存
-        st.session_state['search_results'] = [
+        st.session_state['customer_results'] = [
             {'id': f['id'], 'path': get_folder_path(service, f['id'])}
             for f in found
         ]
     st.rerun()
 
-# ── 見つからなかった場合 ──────────────────────────────────────────────────────
-if 'search_no_result' in st.session_state:
-    q = st.session_state['search_no_result']
+if 'customer_no_result' in st.session_state:
     st.error(
-        f"「{q}」を含むフォルダが見つかりませんでした。\n\n"
-        "別のキーワードで試してください。"
+        f"「{st.session_state['customer_no_result']}」を含むフォルダが"
+        "見つかりませんでした。別のキーワードで試してください。"
     )
     st.stop()
 
-# ── 複数ヒットした場合 → どれか選ばせる ─────────────────────────────────────
-if 'search_results' in st.session_state and 'selected_folder' not in st.session_state:
-    results = st.session_state['search_results']
-    st.info(
-        f"同じ名前のフォルダが **{len(results)}件** 見つかりました。\n"
-        "保存先をクリックして選んでください："
-    )
+# 複数ヒット → お客様フォルダを選ばせる
+if 'customer_results' in st.session_state and 'customer_folder' not in st.session_state:
+    results = st.session_state['customer_results']
+    st.info(f"候補が **{len(results)}件** 見つかりました。お客様フォルダを選んでください：")
     for r in results:
-        if st.button(f"📁  {r['path']}", key=f"pick_{r['id']}", use_container_width=True):
-            st.session_state['selected_folder'] = r
-            del st.session_state['search_results']
+        if st.button(f"📁  {r['path']}", key=f"cust_{r['id']}", use_container_width=True):
+            st.session_state['customer_folder'] = r
+            st.session_state.pop('customer_results', None)
             st.rerun()
     st.stop()
 
-# ── 保存先が未選択の場合はここで停止 ─────────────────────────────────────────
-selected = st.session_state.get('selected_folder')
-if not selected:
-    st.info("フォルダ名を入力して「探す」をクリックしてください。")
+customer_folder = st.session_state.get('customer_folder')
+if not customer_folder:
+    st.info("お客様名を入力して「探す」をクリックしてください。")
     st.stop()
 
-# ── 保存先が確定した場合 ──────────────────────────────────────────────────────
-st.success(f"✅ 保存先：**{selected['path']}**")
+st.success(f"✅ お客様フォルダ：**{customer_folder['path']}**")
+if st.button("🔄 お客様フォルダを選び直す"):
+    _reset_folder_state()
+    st.rerun()
 
-if st.button("🔄 フォルダを変更する"):
-    for k in ['selected_folder', 'search_results', 'search_no_result']:
+st.markdown("---")
+
+# ── ③-2 保存先フォルダを探す（お客様フォルダの中） ──────────────────────────
+st.markdown("**③-2　保存先フォルダを探す**（お客様フォルダの中）")
+st.caption("お客様フォルダの中にある保存先フォルダ名の一部を入力してください。")
+
+with st.form("sub_search_form", clear_on_submit=False):
+    sub_query = st.text_input(
+        "保存先フォルダ名（一部でもOK）",
+        placeholder="例: 請負契約書類　/ 契約　/ スキャン",
+    )
+    col_a, col_b = st.columns(2)
+    with col_a:
+        sub_submitted = st.form_submit_button(
+            "🔍 このフォルダを探す", use_container_width=True
+        )
+    with col_b:
+        save_to_customer = st.form_submit_button(
+            "📁 お客様フォルダに直接保存", use_container_width=True
+        )
+
+# お客様フォルダ直下にそのまま保存する選択
+if save_to_customer:
+    st.session_state['selected_folder'] = dict(customer_folder)
+    st.session_state.pop('sub_results', None)
+    st.session_state.pop('sub_no_result', None)
+    st.rerun()
+
+# お客様フォルダ配下を絞り込み検索
+if sub_submitted and sub_query.strip():
+    for k in ['selected_folder', 'sub_results', 'sub_no_result']:
+        st.session_state.pop(k, None)
+    with st.spinner(f"「{sub_query.strip()}」をお客様フォルダ内で検索中…"):
+        found = search_descendant_folders(
+            service, customer_folder['id'], sub_query.strip()
+        )
+
+    if not found:
+        st.session_state['sub_no_result'] = sub_query.strip()
+    elif len(found) == 1:
+        st.session_state['selected_folder'] = {
+            'id': found[0]['id'],
+            'path': get_folder_path(service, found[0]['id']),
+        }
+    else:
+        st.session_state['sub_results'] = [
+            {'id': f['id'], 'path': get_folder_path(service, f['id'])}
+            for f in found
+        ]
+    st.rerun()
+
+if 'sub_no_result' in st.session_state:
+    st.error(
+        f"お客様フォルダ内に「{st.session_state['sub_no_result']}」を含む"
+        "フォルダが見つかりませんでした。\n\n"
+        "別のキーワードで試すか、「お客様フォルダに直接保存」を選んでください。"
+    )
+    st.stop()
+
+# 複数ヒット → 保存先を選ばせる
+if 'sub_results' in st.session_state and 'selected_folder' not in st.session_state:
+    results = st.session_state['sub_results']
+    st.info(f"候補が **{len(results)}件** 見つかりました。保存先を選んでください：")
+    for r in results:
+        if st.button(f"📁  {r['path']}", key=f"sub_{r['id']}", use_container_width=True):
+            st.session_state['selected_folder'] = r
+            st.session_state.pop('sub_results', None)
+            st.rerun()
+    st.stop()
+
+selected = st.session_state.get('selected_folder')
+if not selected:
+    st.info("保存先フォルダ名を入力して「探す」をクリックしてください。")
+    st.stop()
+
+st.success(f"✅ 保存先：**{selected['path']}**")
+if st.button("🔄 保存先フォルダを変更する"):
+    for k in ['selected_folder', 'sub_results', 'sub_no_result']:
         st.session_state.pop(k, None)
     st.rerun()
 
