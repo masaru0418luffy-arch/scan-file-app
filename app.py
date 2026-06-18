@@ -127,17 +127,17 @@ def build_service():
 
 
 def search_folders(service, name: str) -> list:
-    """フォルダ名で Drive 全体を検索する（完全一致）。"""
+    """キーワードを含むフォルダを Drive 全体から検索する（部分一致）。"""
     safe = name.replace("'", "\\'")
     res = service.files().list(
         q=(
-            f"name = '{safe}' "
+            f"name contains '{safe}' "
             "and mimeType = 'application/vnd.google-apps.folder' "
             "and trashed = false"
         ),
         fields='files(id, name, parents)',
         orderBy='name',
-        pageSize=20,
+        pageSize=50,
     ).execute()
     return res.get('files', [])
 
@@ -363,14 +363,14 @@ st.markdown("---")
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.subheader("③ 保存先フォルダを指定する")
-st.caption("保存したいフォルダの名前を入力してください。Google Drive から自動で探します。")
+st.caption("フォルダ名の一部を入力してください。キーワードを含むフォルダを自動で探します。")
 
 # フォルダ検索フォーム（Enter キーでも送信できる）
 with st.form("folder_search_form", clear_on_submit=False):
     folder_query = st.text_input(
-        "フォルダ名",
-        placeholder="例: 請負契約書類",
-        help="Google Drive 内のフォルダ名を正確に入力してください。",
+        "フォルダ名（一部でもOK）",
+        placeholder="例: 請負　/ 契約　/ 山崎",
+        help="フォルダ名の一部を入力するだけで候補が表示されます。",
     )
     search_submitted = st.form_submit_button("🔍 このフォルダを探す", use_container_width=True)
 
@@ -400,8 +400,8 @@ if search_submitted and folder_query.strip():
 if 'search_no_result' in st.session_state:
     q = st.session_state['search_no_result']
     st.error(
-        f"「{q}」というフォルダが見つかりませんでした。\n\n"
-        "フォルダ名が正しいか確認してください。"
+        f"「{q}」を含むフォルダが見つかりませんでした。\n\n"
+        "別のキーワードで試してください。"
     )
     st.stop()
 
