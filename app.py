@@ -127,17 +127,21 @@ def build_service():
 
 
 def search_folders(service, name: str) -> list:
-    """キーワードを含むフォルダを Drive 全体から検索する（部分一致）。"""
+    """キーワードを含むフォルダを Drive 全体（共有ドライブ含む）から検索する。"""
     safe = name.replace("'", "\\'")
+    q = (
+        f"name contains '{safe}' "
+        "and mimeType = 'application/vnd.google-apps.folder' "
+        "and trashed = false"
+    )
     res = service.files().list(
-        q=(
-            f"name contains '{safe}' "
-            "and mimeType = 'application/vnd.google-apps.folder' "
-            "and trashed = false"
-        ),
+        q=q,
         fields='files(id, name, parents)',
         orderBy='name',
         pageSize=50,
+        includeItemsFromAllDrives=True,   # 共有ドライブを含める
+        supportsAllDrives=True,
+        corpora='allDrives',              # マイドライブ＋共有ドライブ全体を対象
     ).execute()
     return res.get('files', [])
 
@@ -153,7 +157,10 @@ def get_folder_path(service, folder_id: str) -> str:
             break
         seen.add(fid)
         try:
-            meta = service.files().get(fileId=fid, fields='name,parents').execute()
+            meta = service.files().get(
+                fileId=fid, fields='name,parents',
+                supportsAllDrives=True,
+            ).execute()
             parts.insert(0, meta['name'])
             parents = meta.get('parents', [])
             if not parents:
@@ -450,6 +457,7 @@ if st.button("💾  このフォルダに保存する", type='primary', use_cont
                 body={'name': new_name, 'parents': [folder_id]},
                 media_body=media,
                 fields='id,webViewLink',
+                supportsAllDrives=True,   # 共有ドライブへのアップロード対応
             ).execute()
 
             st.balloons()
