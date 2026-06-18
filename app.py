@@ -146,43 +146,45 @@ def search_folders(service, name: str) -> list:
     return res.get('files', [])
 
 
-def list_child_folders(service, parent_id: str) -> list:
-    """指定フォルダの直下にあるサブフォルダ一覧を返す。"""
-    res = service.files().list(
-        q=(
-            f"'{parent_id}' in parents "
-            "and mimeType = 'application/vnd.google-apps.folder' "
-            "and trashed = false"
-        ),
-        fields='files(id, name)',
-        orderBy='name',
-        pageSize=100,
-        includeItemsFromAllDrives=True,
-        supportsAllDrives=True,
-        corpora='allDrives',
-    ).execute()
-    return res.get('files', [])
+def _is_descendant_of(service, folder_id: str, ancestor_id: str,
+                      cache: dict, max_up: int = 20) -> bool:
+    """folder_id が ancestor_id の配下（自身含む）にあるかを親を辿って判定。"""
+    fid = folder_id
+    for _ in range(max_up):
+        if fid == ancestor_id:
+            return True
+        if fid in cache:
+            parents = cache[fid]
+        else:
+            try:
+                meta = service.files().get(
+                    fileId=fid, fields='parents', supportsAllDrives=True
+                ).execute()
+                parents = meta.get('parents', [])
+            except Exception:
+                parents = []
+            cache[fid] = parents
+        if not parents:
+            return False
+        fid = parents[0]
+    return False
 
 
-def search_descendant_folders(service, parent_id: str, keyword: str,
-                              max_depth: int = 4) -> list:
-    """親フォルダの配下（子孫含む）からキーワードを含むフォルダを探す。"""
-    kw = keyword.lower()
+def search_descendant_folders(service, parent_id: str, keyword: str) -> list:
+    """お客様フォルダの配下（子孫含む・深さ無制限）からキーワード一致を探す。
+
+    Drive 全体をキーワードで一括検索し、お客様フォルダの子孫だけに絞り込む。
+    階層の深さに依存せず高速に動作する。
+    """
+    found = search_folders(service, keyword)
+    cache: dict = {}
     matches: list = []
-    queue: list = [(parent_id, 0)]
-    visited: set = set()
-
-    while queue:
-        pid, depth = queue.pop(0)
-        if pid in visited or depth > max_depth:
-            continue
-        visited.add(pid)
-        for f in list_child_folders(service, pid):
-            if kw in f['name'].lower():
-                matches.append(f)
-            if depth < max_depth:
-                queue.append((f['id'], depth + 1))
-        if len(matches) >= 50:
+    for f in found:
+        if f['id'] == parent_id:
+            continue  # お客様フォルダ自身は除外（直接保存ボタンで対応）
+        if _is_descendant_of(service, f['id'], parent_id, cache):
+            matches.append(f)
+        if len(matches) >= 100:
             break
     return matches
 
