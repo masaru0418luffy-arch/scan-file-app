@@ -375,7 +375,9 @@ def _extract(name: str, data: bytes) -> tuple:
             pass
 
 
-customer, title, heading = _extract(uploaded.name, uploaded.getvalue())
+# 旧キャッシュ（2要素）が残っていても安全に受け取れるようにする
+_res = _extract(uploaded.name, uploaded.getvalue())
+customer, title, heading = (list(_res) + [None, None, None])[:3]
 st.success(f"📄 **{uploaded.name}** を選択しました")
 st.markdown("---")
 
