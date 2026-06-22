@@ -367,7 +367,7 @@ def _extract(name: str, data: bytes) -> tuple:
     try:
         return extract_from_pdf(path) if suffix == '.pdf' else extract_from_excel(path)
     except Exception:
-        return None, None
+        return None, None, None
     finally:
         try:
             os.unlink(path)
@@ -375,7 +375,7 @@ def _extract(name: str, data: bytes) -> tuple:
             pass
 
 
-customer, title = _extract(uploaded.name, uploaded.getvalue())
+customer, title, heading = _extract(uploaded.name, uploaded.getvalue())
 st.success(f"📄 **{uploaded.name}** を選択しました")
 st.markdown("---")
 
@@ -385,7 +385,7 @@ st.markdown("---")
 
 st.subheader("② お客様情報を確認する")
 
-if not customer and not title:
+if not customer and not title and not heading:
     st.warning("自動で読み取れませんでした。下の欄に入力してください。")
 
 col1, col2 = st.columns(2)
@@ -394,13 +394,28 @@ with col1:
 with col2:
     ttl_val = st.text_input("題名", value=title or '', placeholder="例: 請負契約書")
 
+head_val = st.text_input(
+    "文書の見出し（ファイル上部から自動取得・任意）",
+    value=heading or '',
+    placeholder="例: ○○邸新築工事のご提案",
+    help="ファイルの先頭にある題名らしき文章です。不要なら空欄にしてください。",
+)
+
 if not cust_val or not ttl_val:
     st.warning("お客様名と題名を入力してください。")
     st.stop()
 
+# ファイル名を組み立てる： 日付_お客様名_題名[_見出し].拡張子
 date_str = datetime.now().strftime('%Y%m%d')
 file_ext = Path(uploaded.name).suffix
-new_name = f"{date_str}_{sanitize(cust_val)}_{sanitize(ttl_val)}{file_ext}"
+parts = [date_str, sanitize(cust_val), sanitize(ttl_val)]
+
+head_clean = sanitize(head_val.strip())
+# 見出しが題名と重複する場合は付けない
+if head_clean and head_clean != sanitize(ttl_val):
+    parts.append(head_clean)
+
+new_name = "_".join(parts) + file_ext
 
 st.markdown(
     f'<div class="preview-box">💾 保存ファイル名：<strong>{new_name}</strong></div>',

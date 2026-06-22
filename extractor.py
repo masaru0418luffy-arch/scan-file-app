@@ -27,7 +27,7 @@ CUSTOMER_PATTERNS = [
 ]
 
 
-def extract_from_pdf(filepath: str) -> Tuple[Optional[str], Optional[str]]:
+def extract_from_pdf(filepath: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     try:
         import pdfplumber
     except ImportError:
@@ -38,16 +38,16 @@ def extract_from_pdf(filepath: str) -> Tuple[Optional[str], Optional[str]]:
     try:
         with pdfplumber.open(filepath) as pdf:
             if not pdf.pages:
-                return None, None
+                return None, None, None
             text = pdf.pages[0].extract_text() or ''
     except Exception as e:
         raise RuntimeError(f"PDFの読み取りに失敗しました: {e}")
 
     lines = [ln.strip() for ln in text.split('\n') if ln.strip()]
-    return _find_customer(lines), _find_title(lines)
+    return _find_customer(lines), _find_title(lines), _find_heading(lines)
 
 
-def extract_from_excel(filepath: str) -> Tuple[Optional[str], Optional[str]]:
+def extract_from_excel(filepath: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     try:
         import openpyxl
     except ImportError:
@@ -68,7 +68,7 @@ def extract_from_excel(filepath: str) -> Tuple[Optional[str], Optional[str]]:
     except Exception as e:
         raise RuntimeError(f"Excelファイルの読み取りに失敗しました: {e}")
 
-    return _find_customer(cells), _find_title(cells)
+    return _find_customer(cells), _find_title(cells), _find_heading(cells)
 
 
 def _find_title(lines: list) -> Optional[str]:
@@ -77,6 +77,43 @@ def _find_title(lines: list) -> Optional[str]:
             if kw in line:
                 # Return the full line if it's short enough, otherwise just the keyword
                 return line if len(line) <= 30 else kw
+    return None
+
+
+# 見出しとして採用したくない行を弾くためのパターン
+_DATE_RE = re.compile(r'^[\s　]*(?:令和|平成|西暦)?\s*\d{1,4}\s*[年./-]')
+_NUM_ONLY_RE = re.compile(r'^[\s　0-9０-９.,，、\-－/／ｰ−–—]+$')
+_PAGE_RE = re.compile(r'(?:ページ|頁|page|P\.|No\.?|№)', re.IGNORECASE)
+_CUSTOMER_END_RE = re.compile(r'(?:様|御中|殿)\s*$')
+
+
+def _looks_like_heading(line: str) -> bool:
+    """その行が文書の見出し（題名）らしいかどうかを判定する。"""
+    s = line.strip()
+    if not (2 <= len(s) <= 40):
+        return False
+    if _CUSTOMER_END_RE.search(s):          # 「○○様」などの宛名行
+        return False
+    if _DATE_RE.match(s):                    # 日付行
+        return False
+    if _NUM_ONLY_RE.match(s):                # 数字・記号だけの行
+        return False
+    if _PAGE_RE.search(s):                   # ページ番号など
+        return False
+    # 住所・電話・メールらしき行
+    if re.search(r'(?:〒|TEL|FAX|E-?mail|@|電話|住所)', s, re.IGNORECASE):
+        return False
+    # 会社名の宛先行（御中等が無い純粋な社名は見出しではないことが多い）
+    if re.match(r'^(?:株式会社|有限会社|合同会社)', s) and len(s) <= 20:
+        return False
+    return True
+
+
+def _find_heading(lines: list) -> Optional[str]:
+    """文書の上部にある見出し（題名らしき文章）を取得する。"""
+    for line in lines[:8]:
+        if _looks_like_heading(line):
+            return line.strip()
     return None
 
 
