@@ -375,9 +375,18 @@ def _extract(name: str, data: bytes) -> tuple:
             pass
 
 
-# 旧キャッシュ（2要素）が残っていても安全に受け取れるようにする
+# 旧キャッシュ（2要素や文字列の見出し）が残っていても安全に受け取れるようにする
 _res = _extract(uploaded.name, uploaded.getvalue())
-customer, title, heading = (list(_res) + [None, None, None])[:3]
+customer, title, heading_raw = (list(_res) + [None, None, None])[:3]
+
+# 見出しは候補リストに正規化（旧バージョンの文字列キャッシュにも対応）
+if isinstance(heading_raw, str):
+    heading_candidates = [heading_raw] if heading_raw.strip() else []
+elif isinstance(heading_raw, list):
+    heading_candidates = [h for h in heading_raw if isinstance(h, str) and h.strip()]
+else:
+    heading_candidates = []
+
 st.success(f"📄 **{uploaded.name}** を選択しました")
 st.markdown("---")
 
@@ -387,7 +396,7 @@ st.markdown("---")
 
 st.subheader("② お客様情報を確認する")
 
-if not customer and not title and not heading:
+if not customer and not title and not heading_candidates:
     st.warning("自動で読み取れませんでした。下の欄に入力してください。")
 
 col1, col2 = st.columns(2)
@@ -396,12 +405,39 @@ with col1:
 with col2:
     ttl_val = st.text_input("題名", value=title or '', placeholder="例: 請負契約書")
 
-head_val = st.text_input(
-    "文書の見出し（ファイル上部から自動取得・任意）",
-    value=heading or '',
-    placeholder="例: ○○邸新築工事のご提案",
-    help="ファイルの先頭にある題名らしき文章です。不要なら空欄にしてください。",
-)
+# ── 見出し候補をリロードで切り替える ────────────────────────────────────────
+# ファイルが変わったら候補インデックスをリセット
+_file_sig = f"{uploaded.name}:{uploaded.size}"
+if st.session_state.get('_head_file_sig') != _file_sig:
+    st.session_state['_head_file_sig'] = _file_sig
+    st.session_state['_head_idx'] = 0
+
+n_cand = len(heading_candidates)
+head_idx = st.session_state.get('_head_idx', 0)
+if n_cand:
+    head_idx = head_idx % n_cand
+
+col_h, col_btn = st.columns([4, 1])
+with col_h:
+    default_head = heading_candidates[head_idx] if n_cand else ''
+    head_val = st.text_input(
+        "文書の見出し（ファイル上部から自動取得・任意）",
+        value=default_head,
+        key=f"head_input_{_file_sig}_{head_idx}",
+        placeholder="例: ○○邸新築工事のご提案",
+        help="ファイル先頭から題名候補を上から順に提案します。🔄で次の候補に切り替わります。",
+    )
+with col_btn:
+    st.write("")  # ラベル分の高さ合わせ
+    st.write("")
+    if st.button("🔄 次の候補", use_container_width=True,
+                 disabled=(n_cand <= 1),
+                 help="ファイル上部から次の題名候補を提案します"):
+        st.session_state['_head_idx'] = (head_idx + 1) % n_cand
+        st.rerun()
+
+if n_cand:
+    st.caption(f"候補 {head_idx + 1} / {n_cand} 件　（🔄で切り替え・手入力も可）")
 
 if not cust_val or not ttl_val:
     st.warning("お客様名と題名を入力してください。")

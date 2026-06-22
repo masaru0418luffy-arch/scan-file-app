@@ -27,7 +27,7 @@ CUSTOMER_PATTERNS = [
 ]
 
 
-def extract_from_pdf(filepath: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def extract_from_pdf(filepath: str) -> Tuple[Optional[str], Optional[str], list]:
     try:
         import pdfplumber
     except ImportError:
@@ -44,10 +44,10 @@ def extract_from_pdf(filepath: str) -> Tuple[Optional[str], Optional[str], Optio
         raise RuntimeError(f"PDFの読み取りに失敗しました: {e}")
 
     lines = [ln.strip() for ln in text.split('\n') if ln.strip()]
-    return _find_customer(lines), _find_title(lines), _find_heading(lines)
+    return _find_customer(lines), _find_title(lines), _find_heading_candidates(lines)
 
 
-def extract_from_excel(filepath: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+def extract_from_excel(filepath: str) -> Tuple[Optional[str], Optional[str], list]:
     try:
         import openpyxl
     except ImportError:
@@ -68,7 +68,7 @@ def extract_from_excel(filepath: str) -> Tuple[Optional[str], Optional[str], Opt
     except Exception as e:
         raise RuntimeError(f"Excelファイルの読み取りに失敗しました: {e}")
 
-    return _find_customer(cells), _find_title(cells), _find_heading(cells)
+    return _find_customer(cells), _find_title(cells), _find_heading_candidates(cells)
 
 
 def _find_title(lines: list) -> Optional[str]:
@@ -109,12 +109,26 @@ def _looks_like_heading(line: str) -> bool:
     return True
 
 
-def _find_heading(lines: list) -> Optional[str]:
-    """文書の上部にある見出し（題名らしき文章）を取得する。"""
-    for line in lines[:8]:
-        if _looks_like_heading(line):
-            return line.strip()
-    return None
+def _find_heading_candidates(lines: list, limit: int = 12) -> list:
+    """文書の上部から、題名候補となる文章を「上から順番に」収集して返す。
+
+    リロード機能で順番に提案できるよう、文書の並び順のまま候補をリストで返す。
+    日付・ページ番号・数字だけの行などの明らかなノイズのみ除外する。
+    """
+    result: list = []
+    for line in lines[:20]:
+        s = line.strip()
+        if not (2 <= len(s) <= 50):
+            continue
+        if _NUM_ONLY_RE.match(s) or _DATE_RE.match(s) or _PAGE_RE.search(s):
+            continue
+        if re.search(r'(?:〒|TEL|FAX|E-?mail|@|電話)', s, re.IGNORECASE):
+            continue
+        if s not in result:
+            result.append(s)
+        if len(result) >= limit:
+            break
+    return result
 
 
 def _find_customer(lines: list) -> Optional[str]:
