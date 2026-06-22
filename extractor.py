@@ -58,12 +58,13 @@ def extract_from_excel(filepath: str) -> Tuple[Optional[str], Optional[str], lis
     try:
         wb = openpyxl.load_workbook(filepath, data_only=True)
         ws = wb.active
+        # 見出し候補を十分に集めるため、先頭付近を広めに読む（A1〜H40）
         cells: list[str] = []
-        for row in ws.iter_rows(min_row=1, max_row=10, min_col=1, max_col=3, values_only=True):
+        for row in ws.iter_rows(min_row=1, max_row=40, min_col=1, max_col=8, values_only=True):
             for val in row:
                 if val is not None:
                     s = str(val).strip()
-                    if s:
+                    if s and s not in cells:
                         cells.append(s)
     except Exception as e:
         raise RuntimeError(f"Excelファイルの読み取りに失敗しました: {e}")
@@ -116,7 +117,7 @@ def _find_heading_candidates(lines: list, limit: int = 12) -> list:
     日付・ページ番号・数字だけの行などの明らかなノイズのみ除外する。
     """
     result: list = []
-    for line in lines[:20]:
+    for line in lines[:30]:
         s = line.strip()
         if not (2 <= len(s) <= 50):
             continue
