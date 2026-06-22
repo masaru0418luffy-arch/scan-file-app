@@ -116,7 +116,9 @@ def _find_heading_candidates(lines: list, limit: int = 12) -> list:
     リロード機能で順番に提案できるよう、文書の並び順のまま候補をリストで返す。
     日付・ページ番号・数字だけの行などの明らかなノイズのみ除外する。
     """
-    result: list = []
+    keyworded: list = []  # 「報告書」「契約書」等の題名キーワードを含む行（最優先）
+    others: list = []     # それ以外の見出し候補（文書の上から順）
+
     for line in lines[:30]:
         s = line.strip()
         if not (2 <= len(s) <= 50):
@@ -125,6 +127,17 @@ def _find_heading_candidates(lines: list, limit: int = 12) -> list:
             continue
         if re.search(r'(?:〒|TEL|FAX|E-?mail|@|電話)', s, re.IGNORECASE):
             continue
+
+        if any(kw in s for kw in TITLE_KEYWORDS):
+            if s not in keyworded:
+                keyworded.append(s)
+        else:
+            if s not in others:
+                others.append(s)
+
+    # 題名キーワードを含む行を先頭に、その後に上から順の候補を並べる
+    result: list = []
+    for s in keyworded + others:
         if s not in result:
             result.append(s)
         if len(result) >= limit:
