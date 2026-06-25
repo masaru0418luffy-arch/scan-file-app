@@ -443,7 +443,7 @@ if not cust_val or not ttl_val:
     st.warning("お客様名と題名を入力してください。")
     st.stop()
 
-# ファイル名を組み立てる： 日付_お客様名_題名[_見出し].拡張子
+# ファイル名を自動で組み立てる： 日付_お客様名_題名[_見出し].拡張子
 date_str = datetime.now().strftime('%Y%m%d')
 file_ext = Path(uploaded.name).suffix
 parts = [date_str, sanitize(cust_val), sanitize(ttl_val)]
@@ -453,10 +453,28 @@ head_clean = sanitize(head_val.strip())
 if head_clean and head_clean != sanitize(ttl_val):
     parts.append(head_clean)
 
-new_name = "_".join(parts) + file_ext
+auto_name = "_".join(parts) + file_ext
+
+# ── 保存ファイル名を任意で直接編集できる欄 ─────────────────────────────────
+# 上の項目（お客様名・題名・見出し）を変更すると自動名が再生成され、この欄も更新される。
+# ファイル名だけを手直ししたい場合は、この欄を直接編集すればその内容で保存される。
+st.markdown("**保存ファイル名**（必要に応じて直接編集できます）")
+edited_name = st.text_input(
+    "保存ファイル名",
+    value=auto_name,
+    key=f"fname_{auto_name}",   # 自動名が変わったら欄もリセット
+    label_visibility="collapsed",
+)
+
+# 入力値を整える：空なら自動名、使えない文字は置換、拡張子は必ず付与
+final_name = sanitize(edited_name.strip()) or auto_name
+if file_ext and not final_name.lower().endswith(file_ext.lower()):
+    final_name += file_ext
+
+new_name = final_name
 
 st.markdown(
-    f'<div class="preview-box">💾 保存ファイル名：<strong>{new_name}</strong></div>',
+    f'<div class="preview-box">💾 保存される名前：<strong>{new_name}</strong></div>',
     unsafe_allow_html=True,
 )
 st.markdown("---")
