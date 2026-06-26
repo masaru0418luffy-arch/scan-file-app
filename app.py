@@ -112,6 +112,31 @@ def exchange_code(code: str) -> dict:
     }
 
 
+def refresh_access_token(refresh_token: str) -> dict:
+    """保存済みのリフレッシュトークンから新しいアクセストークンを取得する。"""
+    g = st.secrets['google']
+    resp = req.post(
+        'https://oauth2.googleapis.com/token',
+        data={
+            'refresh_token': refresh_token,
+            'client_id':     g['client_id'],
+            'client_secret': g['client_secret'],
+            'grant_type':    'refresh_token',
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    if 'error' in data:
+        raise ValueError(data.get('error_description', data['error']))
+    return {
+        'token':         data['access_token'],
+        'refresh_token': refresh_token,
+        'token_uri':     'https://oauth2.googleapis.com/token',
+        'scopes':        data.get('scope', ' '.join(SCOPES)).split(),
+    }
+
+
 def build_service():
     d = st.session_state['credentials']
     g = st.secrets['google']
@@ -124,6 +149,24 @@ def build_service():
         scopes=d.get('scopes', SCOPES),
     )
     return build('drive', 'v3', credentials=creds)
+
+
+# ── ブラウザにログインを保存するためのクッキー管理 ──────────────────────────
+def get_cookie_manager():
+    """暗号化クッキーマネージャを返す。利用不可なら None（従来どおりの動作）。"""
+    try:
+        from streamlit_cookies_manager import EncryptedCookieManager
+    except Exception:
+        return None
+    try:
+        pw = st.secrets['google'].get('client_secret', 'scan-file-app')
+        cm = EncryptedCookieManager(prefix='scanapp/', password=pw)
+        return cm
+    except Exception:
+        return None
+
+
+COOKIE_KEY = 'refresh_token'
 
 
 def search_folders(service, name: str) -> list:
@@ -218,6 +261,51 @@ def get_folder_path(service, folder_id: str) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ブラウザ保存ログインの準備・復元
+# ─────────────────────────────────────────────────────────────────────────────
+
+cookies = get_cookie_manager()
+# クッキーの読み込み完了を待つ（完了するまで一旦停止）。
+# 万一いつまでも準備完了にならない場合は、数回待った後にクッキー無しで続行する。
+if cookies is not None and not cookies.ready():
+    waited = st.session_state.get('_cookie_wait', 0)
+    if waited < 4:
+        st.session_state['_cookie_wait'] = waited + 1
+        st.stop()
+    else:
+        cookies = None  # 諦めて従来どおり（セッションのみ）で動作
+
+
+def _save_login_cookie(refresh_token: str) -> None:
+    if cookies is not None and refresh_token:
+        try:
+            cookies[COOKIE_KEY] = refresh_token
+            cookies.save()
+        except Exception:
+            pass
+
+
+def _clear_login_cookie() -> None:
+    if cookies is not None:
+        try:
+            if COOKIE_KEY in cookies:
+                del cookies[COOKIE_KEY]
+                cookies.save()
+        except Exception:
+            pass
+
+
+# 前回のログインがブラウザに保存されていれば自動で復元（サインイン画面をスキップ）
+if 'credentials' not in st.session_state and cookies is not None:
+    saved_rt = cookies.get(COOKIE_KEY)
+    if saved_rt:
+        try:
+            st.session_state['credentials'] = refresh_access_token(saved_rt)
+        except Exception:
+            _clear_login_cookie()  # 失効していたら消して通常サインインへ
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # OAuth コールバック処理（Google から戻ってきたとき）
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -236,7 +324,10 @@ elif 'code' in params:
         st.session_state['_last_code'] = code
         st.session_state.pop('auth_error', None)
         try:
-            st.session_state['credentials'] = exchange_code(code)
+            creds = exchange_code(code)
+            st.session_state['credentials'] = creds
+            # 次回以降サインインを省くため、ブラウザに保存
+            _save_login_cookie(creds.get('refresh_token'))
         except Exception as e:
             st.session_state['auth_error'] = (
                 f"{type(e).__name__}: {e}\n\n"
@@ -328,7 +419,8 @@ try:
     service = build_service()
 except Exception:
     st.warning("サインイン情報が古くなりました。再度サインインしてください。")
-    del st.session_state['credentials']
+    st.session_state.pop('credentials', None)
+    _clear_login_cookie()  # 失効した保存ログインを消して再ログインへ
     st.rerun()
 
 col_msg, col_out = st.columns([5, 1])
@@ -338,6 +430,7 @@ with col_out:
     if st.button("ログアウト"):
         for k in ['credentials', 'selected_folder', 'search_results', 'search_no_result']:
             st.session_state.pop(k, None)
+        _clear_login_cookie()
         st.rerun()
 
 st.markdown("---")
