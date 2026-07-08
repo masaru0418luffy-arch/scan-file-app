@@ -301,8 +301,12 @@ if 'credentials' not in st.session_state and cookies is not None:
     if saved_rt:
         try:
             st.session_state['credentials'] = refresh_access_token(saved_rt)
+            # アクセスのたびに保存期限を延ばす（使い続ける限り切れない）
+            _save_login_cookie(saved_rt)
         except Exception:
-            _clear_login_cookie()  # 失効していたら消して通常サインインへ
+            # 保存ログインが失効していた → 消して、分かりやすく再ログインを促す
+            st.session_state['login_expired'] = True
+            _clear_login_cookie()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -394,6 +398,15 @@ st.markdown("---")
 
 if 'credentials' not in st.session_state:
     st.markdown("---")
+
+    # 保存ログインの期限切れなら、その旨を分かりやすく案内
+    if st.session_state.pop('login_expired', False):
+        st.info(
+            "🔐 前回のログイン情報の有効期限が切れました。\n\n"
+            "お手数ですが、下のボタンからもう一度サインインしてください。"
+            "一度サインインすれば、しばらくはこの操作は不要になります。"
+        )
+
     st.markdown("### はじめに Google アカウントでサインインしてください")
     st.markdown(
         "ファイルを Google Drive に保存するため、"
