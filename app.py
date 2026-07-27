@@ -545,18 +545,27 @@ with col_btn:
 if n_cand:
     st.caption(f"候補 {head_idx + 1} / {n_cand} 件　（🔄で切り替え・手入力も可）")
 
-if not cust_val or not ttl_val:
-    st.warning("お客様名と題名を入力してください。")
+# お客様名は必須（フォルダ検索にも使うため）。
+# 題名は、空でも「文書の見出し」があればそれで代用して先に進めるようにする。
+if not cust_val.strip():
+    st.warning("お客様名を入力してください。")
+    st.stop()
+if not ttl_val.strip() and not head_val.strip():
+    st.warning("題名、または「文書の見出し」のどちらかを入力してください。")
     st.stop()
 
 # ファイル名を自動で組み立てる： 日付_お客様名_題名[_見出し].拡張子
 date_str = datetime.now().strftime('%Y%m%d')
 file_ext = Path(uploaded.name).suffix
-parts = [date_str, sanitize(cust_val), sanitize(ttl_val)]
 
+ttl_clean  = sanitize(ttl_val.strip())
 head_clean = sanitize(head_val.strip())
-# 見出しが題名と重複する場合は付けない
-if head_clean and head_clean != sanitize(ttl_val):
+
+parts = [date_str, sanitize(cust_val.strip())]
+if ttl_clean:
+    parts.append(ttl_clean)
+# 見出しは題名と重複しない場合のみ追加（題名が空なら見出しが題名代わりになる）
+if head_clean and head_clean != ttl_clean:
     parts.append(head_clean)
 
 auto_name = "_".join(parts) + file_ext
